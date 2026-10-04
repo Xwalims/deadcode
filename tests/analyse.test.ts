@@ -208,6 +208,70 @@ test('an aliased import is not counted as unresolved', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// The two resolver levels must agree
+//
+// The file graph resolves specifiers with the real resolver, and the symbol
+// index used to keep a private relative-only copy. Any specifier that was not
+// literally starting with a dot -- every tsconfig `paths` alias -- therefore
+// resolved at the file level but not at the symbol level, so the tool marked a
+// file reachable and then reported the symbols in it as "no file in the project
+// imports it". Each test below is one way that contradiction showed up.
+// ---------------------------------------------------------------------------
+
+test('a symbol imported through a path alias is not reported unused', async () => {
+  const analysis = await fixture('aliases');
+  assert.equal(
+    symbolsOf(analysis, 'unused-function').includes('fromAlias'),
+    false,
+    `"fromAlias" is imported by main.ts through @app/*: ${symbolsOf(analysis, 'unused-function').join(', ')}`,
+  );
+});
+
+test('a symbol reached through an alias in a re-export is not reported unused', async () => {
+  const analysis = await fixture('aliases');
+  assert.equal(
+    symbolsOf(analysis, 'unused-function').includes('onlyUsedViaAlias'),
+    false,
+    `helper.ts is only reachable through @app/*: ${symbolsOf(analysis, 'unused-function').join(', ')}`,
+  );
+});
+
+test('the file holding an aliased import is still reachable', async () => {
+  const analysis = await fixture('aliases');
+  assert.equal(reportsFile(analysis, 'aliased/helper.ts'), false);
+  assert.equal(reportsFile(analysis, 'services/api.ts'), false);
+});
+
+test('no symbol is reported unused on a file the graph called unreachable', async () => {
+  // The contradiction itself: a file is either reachable, in which case its
+  // symbols are analysed, or unreachable, in which case it is not. A symbol
+  // finding on a file outside the reachable set means the two levels disagreed.
+  for (const name of ['simple', 'traps', 'aliases']) {
+    const analysis = await fixture(name);
+    for (const finding of analysis.findings) {
+      if (finding.kind === 'unused-file' || finding.kind === 'missing-dependency') continue;
+      assert.ok(
+        analysis.reachable.has(finding.file),
+        `${finding.kind} ${finding.symbol} reported on ${finding.file}, which is not reachable`,
+      );
+    }
+  }
+});
+
+test('the alias fix does not silence genuine findings in the same fixture', async () => {
+  // The negative control. Resolving more specifiers must not turn the rule off:
+  // `orphan` in main.ts is exported and imported by nobody, aliased or not, so
+  // it must still be reported. Without this, "no false positives" and "no
+  // findings at all" would look identical.
+  const unused = symbolsOf(await fixture('aliases'), 'unused-function');
+  assert.ok(unused.includes('orphan'), `orphan must still be reported, got: ${unused.join(', ')}`);
+  assert.ok(
+    unused.includes('boot'),
+    `boot is the package entry and nothing imports it, so it stays reported: ${unused.join(', ')}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Reachability invariants that must hold on any project
 // ---------------------------------------------------------------------------
 

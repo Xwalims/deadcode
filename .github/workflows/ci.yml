@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Check the package manifest is valid
+        run: node -e "require('./package.json')"
+
+      # The tests import from dist, so the build has to happen first. `npm ci`
+      # installs the one real dependency, TypeScript, which deadcode itself uses
+      # as its parser rather than as a library.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npx tsc -p tsconfig.json
+
+      - name: Run the test suite
+        run: node --test "dist/tests/**/*.test.js"
+
+      - name: Verify the CLI entry point is executable
+        run: node dist/src/cli/bin.js --version

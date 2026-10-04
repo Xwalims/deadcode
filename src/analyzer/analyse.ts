@@ -17,7 +17,7 @@
 import { loadConfig, type LoadedConfig } from '../config/load.js';
 import { scanProject } from '../scanner/files.js';
 import { parseFile, type ParsedFile } from './parser/parse.js';
-import { loadPathMapping, resolveSpecifier, packageEntryPoints } from './imports/resolve.js';
+import { loadPathMapping, resolveSpecifier, packageEntryPoints, type PathMapping } from './imports/resolve.js';
 import {
   computeReachability,
   shouldReportUnresolved,
@@ -31,7 +31,6 @@ import {
 } from '../rules/index.js';
 import { analyseDependencies } from './dependencies/analyse.js';
 import { normalisePath } from '../utils/path.js';
-import { dirname, join } from 'node:path';
 import type {
   Analysis,
   AnalysisStats,
@@ -167,7 +166,7 @@ export async function analyse(options: AnalyseOptions): Promise<Analysis> {
 
   // The importer index is what keeps a re-exported helper from being reported as
   // unused, so it is built once over the whole project rather than per file.
-  const importerIndex = buildImporterIndex(parsed);
+  const importerIndex = buildImporterIndex(parsed, mapping, root);
 
   for (const file of liveFiles) {
     findings.push(
@@ -274,6 +273,8 @@ export async function analyse(options: AnalyseOptions): Promise<Analysis> {
  */
 function buildImporterIndex(
   parsed: readonly ParsedFile[],
+  mapping: PathMapping,
+  root: string,
 ): ReadonlyMap<string, ReadonlySet<string>> {
   const index = new Map<string, Set<string>>();
   const byPath = new Map(parsed.map((file) => [file.file, file]));
@@ -286,6 +287,20 @@ function buildImporterIndex(
     set.add(name);
   };
 
+  // The symbol index must agree with the file graph about what a specifier
+  // points at, so it uses the same resolver. An earlier version kept a private
+  // relative-only copy here, which meant any specifier that was not literally
+  // starting with a dot -- every tsconfig `paths` alias -- resolved at the file
+  // level but not at the symbol level. The result was a symbol reported as
+  // "no file in the project imports it" on the very file the graph had just
+  // marked reachable, which is the exact contradiction that loses a user's
+  // trust in the tool.
+  const resolveTarget = (from: string, specifier: string): string | null => {
+    const resolution = resolveSpecifier(specifier, from, root, mapping);
+    if (resolution.kind !== 'file' && resolution.kind !== 'directory') return null;
+    return byPath.has(resolution.path) ? resolution.path : null;
+  };
+
   // Every parsed file contributes, not only the reachable ones. A symbol used
   // by a file that is itself unreachable is still used, and filtering by
   // reachability here produced a cascade: the module that used the helper was
@@ -294,7 +309,7 @@ function buildImporterIndex(
   for (const file of parsed) {
     for (const entry of file.imports) {
       if (entry.dynamic) continue;
-      const target = resolveImportTarget(file.file, entry.from, byPath);
+      const target = resolveTarget(file.file, entry.from);
       if (!target) continue;
       add(target, entry.local === entry.imported ? entry.imported : entry.local);
     }
@@ -302,7 +317,7 @@ function buildImporterIndex(
     // A re-export is a use of the target's symbol.
     for (const entry of file.exports) {
       if (!entry.from) continue;
-      const target = resolveImportTarget(file.file, entry.from, byPath);
+      const target = resolveTarget(file.file, entry.from);
       if (!target) continue;
       if (entry.exported === '*') {
         const targetFile = byPath.get(target);
@@ -311,9 +326,7 @@ function buildImporterIndex(
         const direct = targetFile?.exports ?? [];
         for (const nested of direct) {
           if (nested.exported !== '*') continue;
-          const next: string | null = nested.from
-          ? resolveImportTarget(target, nested.from, byPath)
-          : null;
+          const next: string | null = nested.from ? resolveTarget(target, nested.from) : null;
           if (!next || next === target) continue;
           const nestedFile = byPath.get(next);
           for (const symbol of nestedFile?.symbols ?? []) add(next, symbol.name);
@@ -325,37 +338,6 @@ function buildImporterIndex(
   }
 
   return index;
-}
-
-/** Resolve a specifier against the already-parsed files, without touching disk. */
-function resolveImportTarget(
-  from: string,
-  specifier: string,
-  byPath: ReadonlyMap<string, ParsedFile>,
-): string | null {
-  if (!specifier.startsWith('.')) return null;
-  const directory = dirname(from);
-  const base = join(directory, specifier);
-  // The candidate set mirrors the resolver: the emit rewrite, then the plain
-  // extension, then the directory's index.
-  const candidates = [
-    base.replace(/\.js$/, '.ts'),
-    base.replace(/\.js$/, '.tsx'),
-    base.replace(/\.jsx$/, '.tsx'),
-    `${base}.ts`,
-    `${base}.tsx`,
-    `${base}.js`,
-    `${base}.jsx`,
-    `${base}.mjs`,
-    `${base}.cjs`,
-    join(base, 'index.ts'),
-    join(base, 'index.tsx'),
-    join(base, 'index.js'),
-  ];
-  for (const candidate of candidates) {
-    if (byPath.has(candidate)) return candidate;
-  }
-  return null;
 }
 
 /** Convenience for callers that only want the findings. */
