@@ -4,7 +4,7 @@
   "description": "Fast, accurate dead code detection for JavaScript and TypeScript projects.",
   "type": "module",
   "bin": {
-    "deadcode": "dist/cli/index.js"
+    "deadcode": "dist/src/cli/bin.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

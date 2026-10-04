@@ -128,20 +128,36 @@ function collectSeeds(input: ReachabilityInput): { path: string; reason: string 
     }
   }
 
-  // package.json points at entry points by name, which may not match any
-  // convention: `main: "build/entry.js"`, `bin: { tool: "src/cli.ts" }`.
+  // package.json points at entry points by name, and those names almost always
+  // refer to built output: `main: "dist/index.js"`, `bin: "dist/cli/bin.js"`.
+  // The source that produced it is the same path with a source extension AND
+  // without the build directory, which is why a plain extension swap finds
+  // nothing and the CLI executable gets reported as unused.
+  //
+  // Both forms are checked: the literal path (for a repo that runs its source
+  // directly) and the build-stripped variant (for the usual case).
+  const BUILD_PREFIXES = ['dist/', 'build/', 'out/', 'lib/'];
   for (const entry of input.manifestEntries) {
-    const candidate = join(input.root, entry);
-    for (const file of input.files) {
-      if (file === candidate) {
-        add(file, `named by package.json as ${entry}`);
-        break;
-      }
-      // `main` often points at built output; the source that feeds it is
-      // usually the same path with a source extension.
-      const stem = candidate.replace(/\.(js|jsx|mjs|cjs)$/, '');
-      if (file === `${stem}.ts` || file === `${stem}.tsx`) {
-        add(file, `the source package.json points at for ${entry}`);
+    const clean = entry.replace(/^\.\//, '');
+    const candidates: string[] = [];
+
+    const variants = [clean];
+    for (const prefix of BUILD_PREFIXES) {
+      if (clean.startsWith(prefix)) variants.push(clean.slice(prefix.length));
+    }
+
+    for (const variant of variants) {
+      candidates.push(join(input.root, variant));
+      const stem = variant.replace(/\.(js|jsx|mjs|cjs)$/, '');
+      candidates.push(join(input.root, `${stem}.ts`));
+      candidates.push(join(input.root, `${stem}.tsx`));
+      candidates.push(join(input.root, `${stem}.mts`));
+      candidates.push(join(input.root, `${stem}.cts`));
+    }
+
+    for (const candidate of candidates) {
+      if (input.files.includes(candidate)) {
+        add(candidate, `named by package.json as ${entry}`);
         break;
       }
     }
