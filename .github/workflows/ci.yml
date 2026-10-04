@@ -35,8 +35,14 @@ jobs:
       - name: Typecheck and build
         run: npx tsc -p tsconfig.json
 
+      # Not `node --test "dist/tests/**/*.test.js"`: node only understands a glob
+      # pattern in the --test arguments from v22 onwards. On node 20 the pattern
+      # is taken as a literal path and the run dies with
+      # "Could not find '.../dist/tests/**/*.test.js'". scripts/run-tests.mjs
+      # collects the compiled test files itself and hands node explicit paths,
+      # which behaves the same on every supported version.
       - name: Run the test suite
-        run: node --test "dist/tests/**/*.test.js"
+        run: npm run test:quick
 
       - name: Verify the CLI entry point is executable
         run: node dist/src/cli/bin.js --version

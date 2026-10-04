@@ -27,8 +27,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test 'dist/tests/**/*.test.js'",
-    "test:quick": "node --test 'dist/tests/**/*.test.js'",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "test:quick": "node scripts/run-tests.mjs",
+    "test:list": "node scripts/run-tests.mjs --list",
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [

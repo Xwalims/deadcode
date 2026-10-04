@@ -39,9 +39,16 @@ threshold, `1` findings at or above it, `2` the tool could not run.
 Most files that look unreferenced are not. A file is only reported when no import
 path reaches it from any entry point, and the entry points are deliberately
 generous: conventional names (`index.*`, `main.*`, `cli.*`), every path in
-`package.json` (`main`, `module`, `types`, `bin`, `exports`), and the config
-files a tool reads rather than code imports (`vite.config.*`, `jest.config.*`,
-`tsconfig*.json`, `.github/workflows/*.yml`, and the rest).
+`package.json` (`main`, `module`, `types`, `bin`, `exports`, and the paths named
+inside `scripts`), and the config files a tool reads rather than code imports
+(`vite.config.*`, `jest.config.*`, `tsconfig*.json`, `.github/workflows/*.yml`,
+and the rest).
+
+A `scripts` entry is a shell command, not a path, so it is pulled apart before
+anything is matched: `node "scripts/build.js"`, `cmd && node scripts/other.js`
+and `node scripts\win.js` all name a real file, while `tsc -p .`, an absolute
+path such as `/opt/x.js` and a bare package name do not, because a candidate
+that matched a local file by accident would hide real dead code instead.
 
 Within a file, a symbol is only reported when its name is imported by nothing
 *and* is not referenced inside its own file. A barrel that re-exports everything
@@ -111,6 +118,15 @@ npm test
 The tests run against the real fixture projects under `fixtures/`, not against
 string literals, because the interesting failures happen in module resolution
 and reachability rather than in parsing.
+
+`npm test` builds first, then hands the compiled test files to
+`scripts/run-tests.mjs`, which collects them from the filesystem and passes
+explicit paths to `node --test`. The script exists because
+`node --test "dist/tests/**/*.test.js"` only understands the glob from Node 22
+onwards: on Node 20 the pattern is treated as a literal filename and the run
+dies with `Could not find .../dist/tests/**/*.test.js`. Passing the directory
+does not work either, since Node 26 tries to load a directory as a module.
+`npm run test:list` prints the discovered files without running them.
 
 ## Licence
 

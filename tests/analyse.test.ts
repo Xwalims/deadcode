@@ -272,11 +272,63 @@ test('the alias fix does not silence genuine findings in the same fixture', asyn
 });
 
 // ---------------------------------------------------------------------------
+// The manifest fixture: entry points that only package.json scripts name
+// ---------------------------------------------------------------------------
+
+test('a file reached only by an npm script is not reported unused', async () => {
+  // The false positive this guards: `bin` was honoured but `scripts` was not,
+  // so every helper a build or tooling script invoked came back as dead code.
+  const analysis = await fixture('manifest');
+  assert.equal(reportsFile(analysis, 'scripts/tool.mjs'), false);
+  assert.equal(reportsFile(analysis, 'scripts/second.mjs'), false);
+  assert.equal(reportsFile(analysis, 'scripts/deep/flags.mjs'), false);
+});
+
+test('an npm script path is recognised through quotes, chaining and backslashes', async () => {
+  // `node "scripts/with space.mjs"`, `cmd && node scripts/second.mjs` and
+  // `node scripts\win.mjs` all name a real file. A tokenizer that splits on
+  // quotes or on backslashes loses at least one of them, and the file is then
+  // reported as unused even though a script runs it.
+  const analysis = await fixture('manifest');
+  assert.equal(
+    reportsFile(analysis, 'scripts/with space.mjs'),
+    false,
+    'a quoted path containing a space is still one argument',
+  );
+  assert.equal(reportsFile(analysis, 'scripts/win.mjs'), false);
+});
+
+test('an npm script does not make an unreferenced file reachable', async () => {
+  // The negative control for the script reading: `scripts/orphan.mjs` exists,
+  // sits in the same directory as scripts that are used, and is named by no
+  // script, import or manifest field. Reading `scripts` must not have turned
+  // "no false positives" into "no findings".
+  const analysis = await fixture('manifest');
+  assert.equal(
+    reportsFile(analysis, 'scripts/orphan.mjs'),
+    true,
+    'a script nothing runs must still be reported',
+  );
+});
+
+test('an absolute path in a script is not treated as a project file', async () => {
+  // `node /opt/elsewhere/nope.mjs` names something outside the repository. It
+  // must not be resolved against the project root, where a same-named file
+  // could exist and then be silently marked reachable.
+  const analysis = await fixture('manifest');
+  const entryPoints = analysis.entryPoints.join(' ');
+  assert.ok(
+    !entryPoints.includes('opt/elsewhere'),
+    `an absolute script path leaked into the entry points: ${entryPoints}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Reachability invariants that must hold on any project
 // ---------------------------------------------------------------------------
 
 test('every reported unused file is outside the reachable set', async () => {
-  for (const name of ['simple', 'traps', 'aliases']) {
+  for (const name of ['simple', 'traps', 'aliases', 'manifest']) {
     const analysis = await fixture(name);
     for (const finding of analysis.findings.filter((f) => f.kind === 'unused-file')) {
       assert.equal(

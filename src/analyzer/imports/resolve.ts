@@ -223,7 +223,18 @@ export function resolveSpecifier(
   };
 }
 
-/** All specifier strings a package.json can legitimately point at. */
+/**
+ * Every file path a package.json can legitimately point at, as a specifier
+ * string.
+ *
+ * `scripts` matters as much as `main` or `bin`. A project whose only use of
+ * `scripts/build-tool.mjs` is `npm run build` is not shipping dead code, and
+ * before this was read a project got an `unused-file` finding for every helper
+ * a script invoked. Treating the whole `scripts` object as one path would be
+ * worse than useless though: the keys are script names (`build`, `test`) and the
+ * values are shell commands (`tsc -p .`, `node --test`), so they have to be
+ * pulled apart before any of them can be matched against the filesystem.
+ */
 export function packageEntryPoints(root: string): string[] {
   const path = join(root, 'package.json');
   if (!existsSync(path)) return [];
@@ -248,7 +259,107 @@ export function packageEntryPoints(root: string): string[] {
   push(manifest['types']);
   push(manifest['bin']);
   push(manifest['exports']);
+  for (const scriptPath of packageScriptPaths(manifest['scripts'])) {
+    found.push(scriptPath);
+  }
   return found;
+}
+
+/**
+ * Paths a package.json `scripts` block refers to, as they appear on disk.
+ *
+ * A script body is a shell command, so the paths inside it have to be pulled
+ * out of the surrounding syntax rather than pattern-matched as a whole. Only
+ * relative-looking tokens are considered, and only after quoting and the
+ * cross-platform separators have been normalised, because an absolute path or a
+ * bare package name must not be turned into a candidate that could match a
+ * local file by coincidence.
+ */
+export function packageScriptPaths(scripts: unknown): string[] {
+  if (!scripts || typeof scripts !== 'object' || Array.isArray(scripts)) return [];
+
+  const found = new Set<string>();
+  for (const body of Object.values(scripts as Record<string, unknown>)) {
+    if (typeof body !== 'string') continue;
+    for (const token of scriptTokens(body)) {
+      for (const candidate of scriptPathCandidates(token)) {
+        found.add(candidate);
+      }
+    }
+  }
+  return [...found];
+}
+
+/**
+ * Split one script body into the tokens a shell would hand to a program.
+ *
+ * This is not a shell parser and does not pretend to be. It exists to find
+ * path-shaped tokens, so it splits on whitespace and on the characters that
+ * separate shell words. Quoting is honoured, though: a path wrapped in quotes
+ * is a single argument even when it contains a space, and a real script
+ * (`node "scripts/with space.mjs"`) hits exactly that. Splitting on the quote
+ * characters as well would report such a path as two fragments and lose it.
+ */
+function scriptTokens(body: string): string[] {
+  const normalised = body.replace(/\\/g, '/');
+  const tokens: string[] = [];
+  let current = '';
+  let quote: string | null = null;
+
+  for (const char of normalised) {
+    if (quote) {
+      if (char === quote) {
+        // The quotes are a delimiter, not part of the word.
+        if (current) tokens.push(current);
+        current = '';
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (/[\s;|&()<>]/.test(char)) {
+      if (current) tokens.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+/**
+ * Turn a script token into candidate file paths, or nothing.
+ *
+ * A token is kept only when it looks like a path to something in the project:
+ * relative, and either already carrying a source or build extension, or
+ * pointing at a `scripts/`-style helper. Everything else, including bare
+ * package names, absolute paths and option flags, is dropped so that it can
+ * never match a local file.
+ */
+function scriptPathCandidates(token: string): string[] {
+  // An npm lifecycle reference such as `run build` or `npm run build` is a
+  // script name, not a file.
+  if (token === 'npm' || token === 'run' || token === 'npx' || token === 'yarn' || token === 'pnpm') {
+    return [];
+  }
+  if (token.startsWith('-')) return [];
+  if (token.startsWith('/') || /^[a-zA-Z]:\//.test(token)) return [];
+
+  const clean = token.replace(/[.,;]+$/, '');
+  if (clean.length === 0) return [];
+
+  // A bare name with no extension is a command on PATH or a script name, not a
+  // file in the repository, unless it is spelled with a path separator.
+  const hasExtension = /\.[A-Za-z0-9]+$/.test(clean);
+  if (!hasExtension && !clean.includes('/')) return [];
+
+  return [clean];
 }
 
 /** True when the path is one of the conventional entry-point filenames. */

@@ -1,0 +1,15 @@
+{
+  "name": "manifest-fixture",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc -p .",
+    "tool": "node scripts/tool.mjs",
+    "quoted": "node \"scripts/with space.mjs\"",
+    "chained": "npm run tool && node scripts/second.mjs",
+    "windows": "node scripts\\win.mjs",
+    "absolute": "node /opt/elsewhere/nope.mjs",
+    "flag": "node --max-old-space-size=4096 scripts/deep/flags.mjs"
+  }
+}
