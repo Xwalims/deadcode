@@ -1,0 +1,11 @@
+{
+  "exclude": [
+    "node_modules",
+    "dist",
+    "fixtures"
+  ],
+  "entryPoints": [
+    "src/index.ts",
+    "src/cli/index.ts"
+  ]
+}
