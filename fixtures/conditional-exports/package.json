@@ -1,0 +1,26 @@
+{
+  "name": "conditional-exports-fixture",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/main.ts",
+  "exports": {
+    ".": {
+      "types": "./src/types.d.ts",
+      "import": "./src/main.ts",
+      "default": "./src/main.ts"
+    },
+    "./plugin": {
+      "types": "./src/plugin-types.ts",
+      "import": "./src/plugin.ts"
+    },
+    "./deep": {
+      "node": {
+        "import": "./src/deep-node.ts",
+        "default": "./src/deep-other.ts"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p ."
+  }
+}

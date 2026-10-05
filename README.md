@@ -44,6 +44,22 @@ inside `scripts`), and the config files a tool reads rather than code imports
 (`vite.config.*`, `jest.config.*`, `tsconfig*.json`, `.github/workflows/*.yml`,
 and the rest).
 
+`exports` is read to any depth, because the modern form nests one level per
+condition:
+
+```json
+{
+  "exports": {
+    "./plugin": { "types": "./src/plugin-types.ts", "import": "./src/plugin.ts" }
+  }
+}
+```
+
+Node resolves that subpath for real, so both files are shipped API surface and
+neither may be called dead code. Only the string values name files: `"./plugin"`,
+`"types"` and `"node"` are a subpath and two conditions, and treating a key as a
+path would mark an unrelated file reachable by accident.
+
 A `scripts` entry is a shell command, not a path, so it is pulled apart before
 anything is matched: `node "scripts/build.js"`, `cmd && node scripts/other.js`
 and `node scripts\win.js` all name a real file, while `tsc -p .`, an absolute

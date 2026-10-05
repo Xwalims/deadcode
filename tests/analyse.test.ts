@@ -324,6 +324,69 @@ test('an absolute path in a script is not treated as a project file', async () =
 });
 
 // ---------------------------------------------------------------------------
+// Conditional exports: subpaths nested under condition objects
+// ---------------------------------------------------------------------------
+
+test('a subpath declared in a conditional exports map is an entry point', async () => {
+  // The false positive this guards: `exports` was descended exactly one level, so
+  // the modern shape
+  //     "exports": { "./plugin": { "types": "...", "import": "..." } }
+  // contributed the subpath keys but not the file paths inside them, and every
+  // conditionally-exported entry came back as an unused file. Node resolves such
+  // a subpath for real, so it is shipped code.
+  const analysis = await fixture('conditional-exports');
+  for (const file of ['src/plugin.ts', 'src/plugin-types.ts']) {
+    assert.equal(
+      reportsFile(analysis, file),
+      false,
+      `${file} is named by a conditional exports map and must not be reported`,
+    );
+  }
+});
+
+test('a condition nested two levels deep is still an entry point', async () => {
+  // Condition objects nest arbitrarily deep (subpath -> condition -> condition),
+  // so the walk has to recurse until it runs out of objects rather than stop
+  // after one level. Both siblings under the "node" condition are reachable.
+  const analysis = await fixture('conditional-exports');
+  for (const file of ['src/deep-node.ts', 'src/deep-other.ts']) {
+    assert.equal(
+      reportsFile(analysis, file),
+      false,
+      `${file} is named two levels deep under "exports" and must not be reported`,
+    );
+  }
+});
+
+test('reading nested exports does not make an unreferenced file reachable', async () => {
+  // The negative control for the deeper walk: `src/orphan.ts` sits next to files
+  // that ARE named by the exports map, and no field, condition or import
+  // mentions it. Recursing further must not turn "no false positives" into
+  // "no findings".
+  const analysis = await fixture('conditional-exports');
+  assert.equal(
+    reportsFile(analysis, 'src/orphan.ts'),
+    true,
+    'a file named by no exports entry must still be reported',
+  );
+});
+
+test('a subpath key is not itself a file path', async () => {
+  // Control on the recursion: the KEYS of the exports map (".", "./plugin",
+  // "./deep") and the keys of a condition object ("types", "import", "node") are
+  // not file paths. Only string VALUES name files. If keys leaked in, a project
+  // with a file called `types.ts` would have it marked reachable by accident.
+  const analysis = await fixture('conditional-exports');
+  const entryPoints = analysis.entryPoints.join(' ');
+  for (const key of ['"types"', '"./plugin"', '"./deep"']) {
+    assert.ok(
+      !entryPoints.includes(key),
+      `an exports key leaked into the entry points: ${entryPoints}`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Reachability invariants that must hold on any project
 // ---------------------------------------------------------------------------
 

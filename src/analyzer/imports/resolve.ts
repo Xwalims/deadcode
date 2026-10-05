@@ -224,6 +224,15 @@ export function resolveSpecifier(
 }
 
 /**
+ * How far a manifest field is descended.
+ *
+ * Two levels of conditions is the deepest real-world shape (subpath ->
+ * environment -> condition), and the limit exists so a cyclic or pathological
+ * manifest terminates instead of spinning.
+ */
+const MAX_MANIFEST_DEPTH = 8;
+
+/**
  * Every file path a package.json can legitimately point at, as a specifier
  * string.
  *
@@ -246,19 +255,38 @@ export function packageEntryPoints(root: string): string[] {
   }
 
   const found: string[] = [];
-  const push = (value: unknown): void => {
-    if (typeof value === 'string') found.push(value);
-    else if (value && typeof value === 'object') {
-      for (const nested of Object.values(value as Record<string, unknown>)) {
-        if (typeof nested === 'string') found.push(nested);
-      }
+  // Every path a manifest field names, collected from arbitrarily deep nesting.
+  //
+  // Depth is not a detail here. `exports` in its modern form nests one level per
+  // condition:
+  //     "exports": { "./plugin": { "types": "…", "import": "…" } }
+  //     "exports": { "./deep":   { "node": { "import": "…" } } }
+  // so a single level of descent picks up the subpath keys and then throws away
+  // the file paths underneath them. Every conditionally-exported entry is
+  // reachable by node's own resolver, so reporting one as dead code is a false
+  // positive on shipped API surface.
+  //
+  // Only string VALUES are collected, never object keys: a key like "types",
+  // "./plugin" or "node" is a condition or a subpath, not a path, and treating it
+  // as one would mark an unrelated file reachable by accident.
+  const push = (value: unknown, depth: number): void => {
+    if (typeof value === 'string') {
+      found.push(value);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    // A hand-rolled guard rather than none: a pathological or self-referential
+    // manifest must not spin here.
+    if (depth > MAX_MANIFEST_DEPTH) return;
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      push(nested, depth + 1);
     }
   };
-  push(manifest['main']);
-  push(manifest['module']);
-  push(manifest['types']);
-  push(manifest['bin']);
-  push(manifest['exports']);
+  push(manifest['main'], 0);
+  push(manifest['module'], 0);
+  push(manifest['types'], 0);
+  push(manifest['bin'], 0);
+  push(manifest['exports'], 0);
   for (const scriptPath of packageScriptPaths(manifest['scripts'])) {
     found.push(scriptPath);
   }
