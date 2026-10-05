@@ -29,7 +29,7 @@
  * certainty.
  */
 import ts from 'typescript';
-import { relative as pathRelative, resolve } from 'node:path';
+import { relative as pathRelative } from 'node:path';
 import type {
   ExportRef,
   ImportRef,
@@ -491,9 +491,4 @@ function isTopLevel(node: ts.Node, sourceFile: ts.SourceFile): boolean {
     current = current.parent;
   }
   return current === sourceFile;
-}
-
-/** Convenience: the absolute path of a root-relative path. */
-export function toAbsolute(root: string, relativePath: string): string {
-  return resolve(root, relativePath);
 }

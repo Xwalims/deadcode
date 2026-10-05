@@ -30,6 +30,7 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "test:quick": "node scripts/run-tests.mjs",
     "test:list": "node scripts/run-tests.mjs --list",
+    "test:fuzz": "npm run build && node scripts/fuzz-unreachable.mjs",
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [

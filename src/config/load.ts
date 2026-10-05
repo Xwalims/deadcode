@@ -11,8 +11,7 @@
  * and silently ignoring the typo would be worse.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isAbsolute, join } from 'node:path';
 import {
   ALL_EXTENSIONS,
   DEFAULT_CONFIG,
@@ -273,12 +272,3 @@ export function isTestFile(relativePath: string): boolean {
   return TEST_FILE_PATTERN.test(relativePath);
 }
 
-/** Absolute path resolution helper used by the scanner. */
-export function absolute(root: string, relativePath: string): string {
-  return resolve(root, relativePath);
-}
-
-/** Exposed so callers can build a file:// URL for dynamic import. */
-export function asModuleUrl(path: string): string {
-  return pathToFileURL(path).href;
-}
