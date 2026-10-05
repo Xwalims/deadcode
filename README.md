@@ -144,6 +144,144 @@ dies with `Could not find .../dist/tests/**/*.test.js`. Passing the directory
 does not work either, since Node 26 tries to load a directory as a module.
 `npm run test:list` prints the discovered files without running them.
 
+## Why the parser is the TypeScript compiler
+
+Not a hand-written parser, and not a regular expression pretending to be one.
+
+A JavaScript parser has to handle template literals nested inside template
+literals, regex literals that look like division, JSX, type annotations, and
+every combination. Every such tool eventually mis-parses something, and a
+mis-parse in a dead-code detector produces a **confident finding about code
+that is actually used**. Using the same parser `tsc` uses means the tool
+agrees with the compiler about what the code means, which is the property that
+matters. It is also the only realistic way to support TypeScript at all.
+
+`typescript` is the only runtime dependency.
+
+## Limitations
+
+Stated plainly, because a tool that hides these is worse than one that does not.
+
+**No type information.** Each file is read on its own, with no `Program`.
+"Unused" therefore means *no syntactic reference exists*, not *the compiler
+proved nothing uses this*. It is why findings carry a severity instead of
+claiming certainty.
+
+**On a published library `unused-export` will be noisy.** An exported symbol
+is part of the public API by definition, and by definition nothing inside your
+own project imports it. Every finding says so; expect volume, and use `ignore`
+or `entryPoints`.
+
+**Runtime string loading is invisible.** `import(modulePath)` with a computed
+path cannot be followed. The importing file stays alive; the target is not
+proved dead.
+
+**Dynamic property access is invisible.** `obj[methodName]()` is identical to
+a static call as far as the syntax goes.
+
+**It never runs your code.** No sandbox, no `eval`, no coverage. That is a
+safety property and also a limit: nothing dynamic can be discovered.
+
+## Performance
+
+Nothing here is claimed without a measurement.
+
+- One directory walk, then file reads. Excludes are checked **before**
+  descending, so a large `dist` costs one stat call rather than thousands.
+- Each file is parsed once with `setParentNodes`, and the rules reuse that AST
+  rather than re-parsing.
+- Reachability walks an explicit queue, not recursion, so a deep import chain
+  cannot overflow the stack.
+- The graph walk uses a `Set` for membership. An earlier version used
+  `Array.includes` inside the loop, which is quadratic in file count — exactly
+  the cost profile a tool is judged on for a large repository.
+
+  The seed-collection pass above it still uses `Array.includes`, because it runs
+  once per configured pattern rather than once per edge. That asymmetry is
+  deliberate and is the only reason it is tolerable.
+
+## Architecture
+
+```
+src/
+├── types.ts                     every type that crosses a module boundary
+├── config/
+│   ├── defaults.ts              one frozen defaults object
+│   └── load.ts                  discovery, validation, path filtering
+├── scanner/files.ts             asynchronous tree walk
+├── analyzer/
+│   ├── analyse.ts               the pipeline, assembled
+│   ├── parser/parse.ts          the TypeScript compiler API
+│   ├── imports/resolve.ts       .js→.ts, index files, aliases, bare specifiers
+│   ├── reachability/compute.ts  seeds and graph traversal
+│   └── dependencies/analyse.ts  package.json against the imports
+├── rules/index.ts               imports, symbols, unreachable code
+├── reporter/text.ts             text and JSON rendering
+├── cli/index.ts                 command parsing and exit codes
+└── index.ts                     the public API
+```
+
+The core is usable as a library:
+
+```js
+import { analyse, renderText } from 'deadcode';
+
+const analysis = await analyse({ root: process.cwd() });
+console.log(renderText(analysis, { colour: false }));
+```
+
+`cli/`, `reporter/` and `config/` depend on the analyzer; the analyzer depends on
+none of them. That direction is what keeps the CLI replaceable.
+
+## Numbers from this repository's own scan
+
+```sh
+$ node dist/src/cli/bin.js . --json | jq '.stats, (.findings | length)'
+{
+  "filesAnalyzed": 19,
+  "symbolsDiscovered": 160,
+  "importsResolved": 84,
+  "importsUnresolved": 0
+}
+4
+```
+
+Four findings out of 160 symbols, each confirmed by hand to be genuinely unused.
+
+## Development
+
+```sh
+git clone https://github.com/Xwalims/deadcode.git
+cd deadcode
+npm install
+npm run build      # tsc
+npm test           # build, then node --test
+npm run typecheck
+```
+
+The fixtures under `fixtures/` are real projects, not string literals:
+
+| Fixture | What it is for |
+| --- | --- |
+| `fixtures/simple` | dead code next to live code |
+| `fixtures/traps` | barrels, CommonJS, JSX, config files |
+| `fixtures/aliases` | `tsconfig` `paths`, wildcard and exact aliases |
+
+Run the tool on its own source as a sanity check:
+
+```sh
+node dist/src/cli/bin.js . --json
+```
+
+## Contributing
+
+Issues and pull requests are welcome. Please include the output of
+`deadcode . --json` and `deadcode --version`; without the first, a false positive
+cannot be investigated.
+
+If you are reporting a false positive, the `reason` and `escape` fields say what
+the tool believed. That is the first thing to check.
+
 ## Licence
 
 MIT
