@@ -66,6 +66,12 @@ and `node scripts\win.js` all name a real file, while `tsc -p .`, an absolute
 path such as `/opt/x.js` and a bare package name do not, because a candidate
 that matched a local file by accident would hide real dead code instead.
 
+A CommonJS project gets the same treatment as an ES module one. `require()` is
+a load and builds an edge in all three of its shapes, and a declaration is
+public when `module.exports = { a }` or `exports.a = ...` names it -- without
+that, no symbol in a CommonJS file was ever recognised as exported and the
+symbol rule had nothing to say about the whole codebase.
+
 Within a file, a symbol is only reported when its name is imported by nothing
 *and* is not referenced inside its own file. A barrel that re-exports everything
 does not keep a helper alive, because the check is per-name rather than
@@ -80,6 +86,10 @@ so resolution is explicit and reports which rule it applied:
 - extension search, then `index.*` inside a directory
 - `tsconfig.json` `paths` and `baseUrl`, including a single `*` in a pattern
 - bare specifiers, treated as npm packages rather than as project files
+- `require('./x')`, which is a load, in all three of its shapes:
+  destructured (`const { a } = require('./x')`), whole-module
+  (`const x = require('./x')`) and member access
+  (`require('./x').main()`)
 
 One detail worth knowing, because it was a real bug here: the file graph and the
 symbol index must resolve a specifier to the *same* file. They previously kept
@@ -88,6 +98,15 @@ relative paths. Every aliased import therefore resolved at the file level and
 not at the symbol level, so the tool would mark a file reachable and then
 report the symbols inside it as *"no file in the project imports it"*. Both
 levels now share one resolver.
+
+`require.resolve()` and `require.main` are deliberately *not* treated as loads.
+They return a path and a module id; neither executes anything, so following
+them would mark a file reachable that never runs.
+
+A whole-module binding -- `import * as ns from './x'` or `const x =
+require('./x')` -- keeps *every* export of the target alive, because there is no
+type information here to tell `ns.helper()` from `ns.other()`. A destructured
+one names a single member, and only that member survives.
 
 ## Configuration
 
@@ -266,6 +285,7 @@ The fixtures under `fixtures/` are real projects, not string literals:
 | `fixtures/simple` | dead code next to live code |
 | `fixtures/traps` | barrels, CommonJS, JSX, config files |
 | `fixtures/aliases` | `tsconfig` `paths`, wildcard and exact aliases |
+| `fixtures/commonjs` | `require()`, destructuring, namespace, member access |
 
 Run the tool on its own source as a sanity check:
 

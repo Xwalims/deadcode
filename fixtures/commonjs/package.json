@@ -1,0 +1,9 @@
+{
+  "name": "commonjs-fixture",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start-side-effect": "node src/side-effect.js"
+  }
+}

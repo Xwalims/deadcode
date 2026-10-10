@@ -210,6 +210,45 @@ export function findUnusedSymbols(
   return findings;
 }
 
+/**
+ * True when an identifier is a name being PUBLISHED rather than used.
+ *
+ *     module.exports = { a, b: c };
+ *
+ * Here `a` and `c` are the export list, not references to those bindings. Both
+ * are Identifier nodes in the AST, so a reference counter that does not know
+ * this treats the export statement itself as the use, and every CommonJS
+ * function comes back "referenced inside its own file" -- the symbol rule then
+ * has nothing to report in a CommonJS project, because the one thing that
+ * could have kept it quiet was a false reference.
+ *
+ * Narrow on purpose: a shorthand or property assignment inside any *other*
+ * object literal really is a use, and only the literal assigned to
+ * `module.exports` is the export list.
+ */
+function isCommonJsExportMention(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  let isExportName = false;
+  if (ts.isShorthandPropertyAssignment(parent) && parent.name === node) {
+    isExportName = true;
+  } else if (ts.isPropertyAssignment(parent) && parent.name === node) {
+    isExportName = true;
+  }
+  if (!isExportName) return false;
+
+  const literal = parent.parent;
+  if (!ts.isObjectLiteralExpression(literal)) return false;
+  const assignment = literal.parent;
+  if (!ts.isBinaryExpression(assignment) || assignment.right !== literal) return false;
+  const left = assignment.left;
+  return (
+    ts.isPropertyAccessExpression(left) &&
+    ts.isIdentifier(left.expression) &&
+    left.expression.text === 'module' &&
+    left.name.text === 'exports'
+  );
+}
+
 /** How many times a name appears outside its own declaration. */
 function countReferences(file: ParsedFile, name: string): number {
   let count = 0;
@@ -226,7 +265,9 @@ function countReferences(file: ParsedFile, name: string): number {
           ts.isVariableDeclaration(parent));
       const isExportSpecifier =
         parent && ts.isExportSpecifier(parent) && parent.propertyName?.text === name;
-      if (!isOwnDeclaration && !isExportSpecifier) count += 1;
+      if (!isOwnDeclaration && !isExportSpecifier && !isCommonJsExportMention(node)) {
+        count += 1;
+      }
     }
     ts.forEachChild(node, visit);
   };

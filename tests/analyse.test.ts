@@ -176,6 +176,125 @@ test('an unused import inside a file is reported', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// The commonjs fixture: `require()` is a load, not a lookup
+//
+// The parser used to recognise `require.resolve('x')` and `require.main('x')` --
+// neither of which loads a module -- and to ignore the bare `require('x')` every
+// CommonJS file actually uses. A `require` built no edge at all, so a CommonJS
+// project reported every file below its entry point as unused-file. Measured on
+// a four-file project where `main.js` requires two live modules: both reported
+// "no import path reaches this file", from the entry point that requires them.
+// ---------------------------------------------------------------------------
+
+test('a file reached through require() is not reported unused', async () => {
+  const analysis = await fixture('commonjs');
+  for (const file of [
+    'src/helper.js',
+    'src/whole.js',
+    'src/renamed.js',
+    'src/polyfill.js',
+    'src/side-effect.js',
+  ]) {
+    assert.equal(
+      reportsFile(analysis, file),
+      false,
+      `${file} is require()d from the entry point and must not be reported`,
+    );
+  }
+});
+
+test('a symbol pulled out by a destructured require is not reported unused', async () => {
+  const analysis = await fixture('commonjs');
+  // `const { helper } = require('./helper.js')` names exactly one member, so
+  // only that one is kept alive.
+  assert.equal(
+    symbolsOf(analysis, 'unused-function').includes('helper'),
+    false,
+    `"helper" is destructured out of a require: ${symbolsOf(analysis, 'unused-function').join(', ')}`,
+  );
+});
+
+test('a require that keeps the module object keeps every export alive', async () => {
+  const analysis = await fixture('commonjs');
+  // `const whole = require('./whole.js')` holds the namespace, so even
+  // `alsoExported`, which is never named, may not be reported.
+  const unused = symbolsOf(analysis, 'unused-function');
+  assert.equal(
+    unused.includes('alsoExported'),
+    false,
+    `a whole-module require keeps every export alive: ${unused.join(', ')}`,
+  );
+});
+
+test('reading require() does not make a genuinely unreferenced export alive', async () => {
+  // The negative control. `renamed` is destructured out of renamed.js, so
+  // `neverDestructured` -- a sibling export nobody names -- must still be
+  // reported. Without this, "no false positives" and "no findings at all" would
+  // look identical.
+  const unused = symbolsOf(await fixture('commonjs'), 'unused-function');
+  assert.ok(
+    unused.includes('neverDestructured'),
+    `a sibling export nobody destructures must still be reported, got: ${unused.join(', ')}`,
+  );
+});
+
+test('require.resolve does not create an edge to a file', async () => {
+  // `require.resolve('./thing.js')` returns a PATH; it does not load the module.
+  // Treating it as a load would mark a file reachable that never executes.
+  const analysis = await fixture('commonjs');
+  assert.equal(
+    reportsFile(analysis, 'src/resolved-only.js'),
+    true,
+    'a path-only require.resolve must not make the file reachable',
+  );
+});
+
+test('a member-accessed require names the member, not the module', async () => {
+  // `require('./cli.js').main()` is three nodes deep: the outer call, the
+  // property access, and the INNER require call. Reading the `require`
+  // identifier one level too high matches nothing, which is what the first
+  // version did -- so `main` came back as "exported but no file in the
+  // project imports it" from the single line that does exactly that.
+  const analysis = await fixture('commonjs');
+  assert.equal(
+    symbolsOf(analysis, 'unused-function').includes('viaMember'),
+    false,
+    `"viaMember" is reached as require('./entry.js').viaMember(): ${symbolsOf(analysis, 'unused-function').join(', ')}`,
+  );
+});
+
+test('a member-accessed require is recorded once, not twice', async () => {
+  // Pushing the specifier from both the member branch and the bare-require
+  // branch counted one edge as two, which inflated `importsResolved`.
+  const analysis = await fixture('commonjs');
+  assert.equal(
+    analysis.stats.importsUnresolved,
+    0,
+    'every specifier in the CommonJS fixture resolves, member access included',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Namespace imports keep every export alive
+//
+// `import * as ns from './x'` used to record the binding's own NAME against the
+// target, so no real export matched it and each one was reported as "exported
+// but no file in the project imports it" -- on the very file the graph had just
+// marked reachable. Same contradiction the alias fix removed, one level up.
+// ---------------------------------------------------------------------------
+
+test('an export reached through a namespace import is not reported unused', async () => {
+  const analysis = await fixture('aliases');
+  // namespace.ts is imported as `import * as ns` and only ever used as `ns.`.
+  assert.equal(reportsFile(analysis, 'namespace.ts'), false);
+  assert.equal(
+    symbolsOf(analysis, 'unused-function').includes('viaNamespace'),
+    false,
+    `"viaNamespace" is reachable through a namespace import: ${symbolsOf(analysis, 'unused-function').join(', ')}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // The aliases fixture: resolution
 // ---------------------------------------------------------------------------
 

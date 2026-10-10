@@ -311,6 +311,30 @@ function buildImporterIndex(
       if (entry.dynamic) continue;
       const target = resolveTarget(file.file, entry.from);
       if (!target) continue;
+      // A namespace import -- `import * as ns from './x'`, or a `require` that
+      // keeps the whole module object -- keeps EVERY export of the target
+      // alive, not one called `ns` or `*`.
+      //
+      // This used to add the binding's own name, so `import * as ns` recorded
+      // "ns" against the target and no real export matched it. A one-file ESM
+      // project whose entry imported `* as ns` and used `ns.helper` therefore
+      // reported `helper` as "exported but no file in the project imports it",
+      // on the very file the graph had just marked reachable -- the same
+      // contradiction the alias fix removed, one level up, and with the same
+      // consequence: the user learns to distrust the tool.
+      if (entry.imported === '*') {
+        const targetFile = byPath.get(target);
+        for (const symbol of targetFile?.symbols ?? []) add(target, symbol.name);
+        // A namespace re-export chain behaves the same way: `export * from`
+        // through an intermediate barrel still exposes everything.
+        for (const nested of targetFile?.exports ?? []) {
+          if (nested.exported !== '*') continue;
+          const next: string | null = nested.from ? resolveTarget(target, nested.from) : null;
+          if (!next || next === target) continue;
+          for (const symbol of byPath.get(next)?.symbols ?? []) add(next, symbol.name);
+        }
+        continue;
+      }
       add(target, entry.local === entry.imported ? entry.imported : entry.local);
     }
 
